@@ -1,5 +1,5 @@
-use super::chan::{self, SendError, TryRecvError};
-use crate::semaphore::Inner;
+use super::chan::{self, SendError, TryRecvError, TrySendError};
+use crate::semaphore::{Inner, TryAcquireError};
 use futures_util::future::poll_fn;
 use std::task::{Context, Poll};
 
@@ -22,7 +22,25 @@ impl<T> Tx<T> {
             .acquire(1)
             .await
             .map_err(|_| SendError::RxClosed)?;
-        self.0.send(value)
+
+        self.0.send(value);
+        Ok(())
+    }
+    pub fn try_send(&self, value: T) -> Result<(), TrySendError> {
+        // acquire semaphore first
+        self.0
+            .chan
+            .semaphore
+            .try_acquire(1)
+            .map_err(|e| {
+                match e {
+                    TryAcquireError::Closed => TrySendError::RxClosed,
+                    TryAcquireError::NoPermits => TrySendError::Full
+                }
+            })?;
+
+        self.0.send(value);
+        Ok(())
     }
 
     pub fn is_closed(&self) -> bool {

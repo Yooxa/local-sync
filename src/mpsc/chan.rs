@@ -91,6 +91,12 @@ pub enum SendError {
     RxClosed,
 }
 
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+pub enum TrySendError {
+    RxClosed,
+    Full,
+}
+
 pub(crate) struct Rx<T, S>
 where
     S: Semaphore,
@@ -107,13 +113,8 @@ where
         Self { chan }
     }
 
-    // caller must make sure the chan has spaces
-    pub(crate) fn send(&self, value: T) -> Result<(), SendError> {
-        // check if the semaphore is closed
-        if self.chan.semaphore.is_closed() {
-            return Err(SendError::RxClosed);
-        }
-
+    // caller must make sure the chan has spaces and not closed
+    pub(crate) fn send(&self, value: T) {
         // put data into the queue
         unsafe {
             self.chan.queue.borrow_mut().push_unchecked(value);
@@ -122,13 +123,14 @@ where
         if let Some(w) = self.chan.rx_waker.replace(None) {
             w.wake();
         }
-        Ok(())
     }
 
+    #[inline]
     pub fn is_closed(&self) -> bool {
         self.chan.semaphore.is_closed()
     }
 
+    #[inline]
     /// Returns `true` if senders belong to the same channel.
     pub(crate) fn same_channel(&self, other: &Self) -> bool {
         Rc::ptr_eq(&self.chan, &other.chan)
@@ -242,7 +244,7 @@ mod tests {
     async fn test_chan() {
         let semaphore = Inner::new(1);
         let (tx, mut rx) = channel::<u32, _>(semaphore);
-        assert!(tx.send(1).is_ok());
+        tx.send(1);
         assert_eq!(poll_fn(|cx| rx.recv(cx)).await, Some(1));
 
         // close rx

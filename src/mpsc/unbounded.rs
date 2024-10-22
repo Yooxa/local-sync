@@ -4,6 +4,7 @@ use super::{
 };
 use futures_util::future::poll_fn;
 use std::task::{Context, Poll};
+use crate::mpsc::semaphore::Semaphore;
 
 pub struct Tx<T>(chan::Tx<T, Unlimited>);
 
@@ -17,13 +18,20 @@ pub fn channel<T>() -> (Tx<T>, Rx<T>) {
 
 impl<T> Tx<T> {
     pub fn send(&self, value: T) -> Result<(), SendError> {
-        self.0.send(value)
+        if self.0.chan.semaphore.is_closed() {
+            Err(SendError::RxClosed)
+        } else {
+            self.0.send(value);
+            Ok(())
+        }
     }
 
+    #[inline]
     pub fn is_closed(&self) -> bool {
         self.0.is_closed()
     }
 
+    #[inline]
     pub fn same_channel(&self, other: &Self) -> bool {
         self.0.same_channel(&other.0)
     }
@@ -36,18 +44,22 @@ impl<T> Clone for Tx<T> {
 }
 
 impl<T> Rx<T> {
+    #[inline]
     pub async fn recv(&mut self) -> Option<T> {
         poll_fn(|cx| self.poll_recv(cx)).await
     }
 
+    #[inline]
     pub fn poll_recv(&mut self, cx: &mut Context<'_>) -> Poll<Option<T>> {
         self.0.recv(cx)
     }
 
+    #[inline]
     pub fn try_recv(&mut self) -> Result<T, TryRecvError> {
         self.0.try_recv()
     }
 
+    #[inline]
     pub fn close(&mut self) {
         self.0.close()
     }
